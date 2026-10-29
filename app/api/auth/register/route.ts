@@ -32,9 +32,10 @@ export async function POST(request: Request) {
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // 4. Insérer l'utilisateur dans la table `users`
+    // 4. Insérer l'utilisateur avec les valeurs par défaut de la Formule Découverte (Gratuit)
     const [result]: any = await db.query(
-      'INSERT INTO users (email, password_hash) VALUES (?, ?)',
+      `INSERT INTO users (email, password_hash, subscription, maxPhotos, contactRequestsCount, aiAdviceCount) 
+       VALUES (?, ?, 'FREE', 3, 0, 0)`,
       [email, hashedPassword]
     );
 

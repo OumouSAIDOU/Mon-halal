@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 
-// Fonction utilitaire pour vérifier si deux utilisateurs ont un match accepté
+// Fonction utilitaire pour vérifier si deux utilisateurs ont un match accepté (dans contact_requests)
 async function checkIsAcceptedMatch(userA: string | number, userB: string | number) {
   const [rows]: any = await db.query(
-    `SELECT id FROM likes 
+    `SELECT id FROM contact_requests 
      WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
        AND status = 'accepted'`,
     [userA, userB, userB, userA]

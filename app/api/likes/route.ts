@@ -1,67 +1,105 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 
-export async function POST(request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
-    const body = await request.json();
-    
-    // Supporte à la fois senderUserId / receiverUserId ET senderId / receiverId pour éviter tout bug
-    const senderUserId = body.senderUserId || body.senderId;
-    const receiverUserId = body.receiverUserId || body.receiverId;
+    const searchParams = request.nextUrl.searchParams;
+    const userIdStr = searchParams.get('userId');
 
-    if (!senderUserId || !receiverUserId) {
+    if (!userIdStr) {
+      return NextResponse.json({ success: false, error: 'UserId manquant' }, { status: 400 });
+    }
+
+    const currentUserId = parseInt(userIdStr, 10);
+
+    // 1. Demandes REÇUES (ceux qui ont envoyé un like à currentUserId)
+    const [receivedRows]: any = await db.query(
+      `SELECT 
+          l.id as like_id, 
+          COALESCE(l.status, 'pending') as status, 
+          l.created_at, 
+          p.id, 
+          p.user_id, 
+          p.first_name, 
+          p.birth_date, 
+          p.city, 
+          p.postal_code, 
+          p.religiosity_level, 
+          p.bio,
+          p.photos,
+          p.gender,
+          (
+            SELECT COUNT(m.id) 
+            FROM messages m 
+            WHERE m.sender_id = p.user_id 
+              AND m.receiver_id = ? 
+              AND (m.is_read = 0 OR m.is_read IS NULL)
+          ) AS unread_count
+        FROM likes l
+        JOIN profiles p ON l.sender_id = p.user_id
+        WHERE l.receiver_id = ?
+        ORDER BY l.id DESC`,
+      [currentUserId, currentUserId]
+    );
+
+    // 2. Demandes ENVOYÉES (ceux que currentUserId a likés)
+    const [sentRows]: any = await db.query(
+      `SELECT 
+          l.id as like_id, 
+          COALESCE(l.status, 'pending') as status, 
+          l.created_at, 
+          p.id, 
+          p.user_id, 
+          p.first_name, 
+          p.birth_date, 
+          p.city, 
+          p.postal_code, 
+          p.religiosity_level, 
+          p.bio,
+          p.photos,
+          p.gender,
+          (
+            SELECT COUNT(m.id) 
+            FROM messages m 
+            WHERE m.sender_id = p.user_id 
+              AND m.receiver_id = ? 
+              AND (m.is_read = 0 OR m.is_read IS NULL)
+          ) AS unread_count
+        FROM likes l
+        JOIN profiles p ON l.receiver_id = p.user_id
+        WHERE l.sender_id = ?
+        ORDER BY l.id DESC`,
+      [currentUserId, currentUserId]
+    );
+
+    return NextResponse.json({ 
+      success: true, 
+      received: receivedRows || [], 
+      sent: sentRows || [] 
+    });
+  } catch (error) {
+    console.error('Erreur GET /api/matches :', error);
+    return NextResponse.json({ success: false, error: 'Erreur serveur.' }, { status: 500 });
+  }
+}
+
+// Accepter ou Refuser une demande (pour l'onglet des reçues)
+export async function PATCH(request: NextRequest) {
+  try {
+    const { likeId, action } = await request.json(); // action = 'accepted' ou 'declined'
+
+    if (!likeId || !['accepted', 'declined'].includes(action)) {
       return NextResponse.json(
-        { success: false, error: 'Informations manquantes.' },
+        { success: false, error: 'Action invalide ou ID manquant' },
         { status: 400 }
       );
     }
 
-    // 1. Enregistrer le like dans la table des likes
-    await db.query(
-      'INSERT IGNORE INTO likes (sender_id, receiver_id, is_match) VALUES (?, ?, 0)',
-      [senderUserId, receiverUserId]
-    );
+    await db.query('UPDATE likes SET status = ? WHERE id = ?', [action, likeId]);
 
-    // 2. Vérifier si l'autre personne t'a déjà liké (Match réciproque)
-    const [rows]: any = await db.query(
-      'SELECT * FROM likes WHERE sender_id = ? AND receiver_id = ?',
-      [receiverUserId, senderUserId]
-    );
-
-    // Sécurité pour s'assurer de bien récupérer le tableau de résultats
-    const reverseLike = Array.isArray(rows) ? rows : [rows];
-    let isMatch = false;
-
-    // 3. S'il y a un match réciproque
-    if (reverseLike && reverseLike.length > 0 && reverseLike[0]) {
-      isMatch = true;
-      
-      // Mettre is_match à 1 dans la table likes
-      await db.query(
-        'UPDATE likes SET is_match = 1 WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)',
-        [senderUserId, receiverUserId, receiverUserId, senderUserId]
-      );
-
-      // Ajouter également dans la table matches si elle existe
-      try {
-        await db.query(
-          'INSERT IGNORE INTO matches (user1_id, user2_id) VALUES (?, ?)',
-          [Math.min(senderUserId, receiverUserId), Math.max(senderUserId, receiverUserId)]
-        );
-      } catch (e) {
-        // Ignorer si la table matches n'est pas configurée exactement ainsi
-      }
-    }
-
-    return NextResponse.json(
-      { success: true, isMatch, message: isMatch ? 'Match !' : 'Like enregistré' },
-      { status: 200 }
-    );
-  } catch (error: any) {
-    console.error('Erreur lors du like:', error);
-    return NextResponse.json(
-      { success: false, error: error.message || 'Erreur serveur.' },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: true, status: action });
+  } catch (error) {
+    console.error('Erreur PATCH /api/matches :', error);
+    return NextResponse.json({ success: false, error: 'Erreur serveur.' }, { status: 500 });
   }
 }

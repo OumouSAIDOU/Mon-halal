@@ -17,6 +17,7 @@ interface Profile {
   bio: string;
   photos?: string;
   gender: string;
+  status?: 'pending' | 'accepted' | 'declined' | null; // Ajout du statut de la relation
 }
 
 export default function ExplorePage() {
@@ -26,7 +27,7 @@ export default function ExplorePage() {
   const [requireProfile, setRequireProfile] = useState(false);
   const [selectedProfileModal, setSelectedProfileModal] = useState<Profile | null>(null);
 
-  // États pour la modale explicative de Match
+  // États pour la modale de confirmation
   const [showMatchModal, setShowMatchModal] = useState(false);
   const [pendingTargetId, setPendingTargetId] = useState<number | null>(null);
   const [pendingTargetName, setPendingTargetName] = useState('');
@@ -91,7 +92,7 @@ export default function ExplorePage() {
     setShowMatchModal(true);
   };
 
-  // Action CONFIRMER LE MATCH (envoi de la requête)
+  // ACTION CONFIRMER : Envoi de la demande de contact
   const handleConfirmMatch = async () => {
     if (!pendingTargetId) return;
     const userId = localStorage.getItem('userId');
@@ -101,35 +102,40 @@ export default function ExplorePage() {
     }
 
     try {
-      const res = await fetch('/api/likes', {
+      const res = await fetch('/api/contact/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          senderUserId: parseInt(userId, 10), 
-          receiverUserId: pendingTargetId 
+        body: JSON.stringify({
+          senderId: parseInt(userId, 10),
+          receiverId: pendingTargetId,
         }),
       });
 
       const data = await res.json();
 
-      if (data.success) {
-        setProfiles((prev) => prev.filter((p) => p.user_id !== pendingTargetId));
+      if (data.success || res.status === 400 || (data.error && data.error.includes("déjà"))) {
+        // Au lieu de supprimer le profil de la grille, on met à jour son statut à 'pending' pour afficher "Demande en attente"
+        setProfiles((prev) =>
+          prev.map((p) =>
+            p.user_id === pendingTargetId ? { ...p, status: 'pending' } : p
+          )
+        );
         setShowMatchModal(false);
         setSelectedProfileModal(null);
         setPendingTargetId(null);
 
-        if (data.isMatch) {
-          alert("🎉 C'est un Match réciproque ! Retrouvez ce membre dans vos matchs.");
-          router.push('/matches');
+        if (data.success) {
+          alert(`Votre demande de contact a bien été envoyée à ${pendingTargetName} ! 🚀`);
         } else {
-          alert(`Votre demande de match a bien été envoyée à ${pendingTargetName} !`);
+          alert(`Vous aviez déjà envoyé une demande à ${pendingTargetName}.`);
         }
       } else {
-        alert(data.error || "Impossible d'envoyer la demande de match.");
+        alert(data.error || "Une erreur est survenue.");
+        setShowMatchModal(false);
       }
     } catch (err) {
-      console.error('Erreur réseau match :', err);
-      alert("Une erreur est survenue lors de l'envoi.");
+      console.error('Erreur réseau contact :', err);
+      alert("Une erreur est survenue lors de l'envoi de la demande.");
     }
   };
 
@@ -277,29 +283,57 @@ export default function ExplorePage() {
                         </span>
                       </div>
 
-                      {/* Boutons d'action */}
-                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100">
-                        <button
-                          onClick={() => handlePass(profile.user_id)}
-                          className="bg-slate-100 hover:bg-slate-200 text-slate-600 py-3 rounded-2xl font-bold transition text-xs flex items-center justify-center"
-                          title="Passer"
-                        >
-                          <span>✕ Passer</span>
-                        </button>
+                      {/* Boutons d'action conditionnels selon le statut */}
+                      <div className="pt-2 border-t border-slate-100">
+                        {profile.status === 'accepted' ? (
+                          <div className="space-y-2">
+                            <span className="block text-center bg-emerald-50 text-emerald-700 text-[11px] font-bold py-1.5 rounded-xl border border-emerald-200">
+                              ✅ Match accepté
+                            </span>
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                onClick={() => setSelectedProfileModal(profile)}
+                                className="bg-slate-100 hover:bg-slate-200 text-slate-800 py-3 rounded-2xl font-bold transition text-xs flex items-center justify-center gap-1"
+                              >
+                                <span>👁️ Profil</span>
+                              </button>
+                              <Link
+                                href="/messages"
+                                className="bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-2xl font-bold transition text-xs shadow-sm text-center flex items-center justify-center gap-1.5"
+                              >
+                                <span>💬 Message</span>
+                              </Link>
+                            </div>
+                          </div>
+                        ) : profile.status === 'pending' ? (
+                          <div className="w-full bg-amber-50 text-amber-700 py-3 rounded-2xl font-bold text-xs text-center border border-amber-200">
+                            ⏳ Demande en attente
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-3 gap-2">
+                            <button
+                              onClick={() => handlePass(profile.user_id)}
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-600 py-3 rounded-2xl font-bold transition text-xs flex items-center justify-center"
+                              title="Passer"
+                            >
+                              <span>✕ Passer</span>
+                            </button>
 
-                        <button
-                          onClick={() => setSelectedProfileModal(profile)}
-                          className="bg-slate-100 hover:bg-slate-200 text-slate-800 py-3 rounded-2xl font-bold transition text-xs flex items-center justify-center"
-                        >
-                          <span>👁️ Profil</span>
-                        </button>
+                            <button
+                              onClick={() => setSelectedProfileModal(profile)}
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-800 py-3 rounded-2xl font-bold transition text-xs flex items-center justify-center"
+                            >
+                              <span>👁️ Profil</span>
+                            </button>
 
-                        <button
-                          onClick={() => handleOpenMatchModal(profile.user_id, profile.first_name)}
-                          className="bg-blue-950 hover:bg-blue-900 text-white py-3 rounded-2xl font-bold transition text-xs shadow-sm flex items-center justify-center gap-1"
-                        >
-                          <span>❤️</span> Matcher
-                        </button>
+                            <button
+                              onClick={() => handleOpenMatchModal(profile.user_id, profile.first_name)}
+                              className="bg-blue-950 hover:bg-blue-900 text-white py-3 rounded-2xl font-bold transition text-xs shadow-sm flex items-center justify-center gap-1"
+                            >
+                              <span>❤️</span> Matcher
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -356,33 +390,42 @@ export default function ExplorePage() {
 
             <div className="p-4 border-t border-slate-100 bg-slate-50 flex gap-3">
               <button
-                onClick={() => handlePass(selectedProfileModal.user_id)}
+                onClick={() => setSelectedProfileModal(null)}
                 className="flex-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 py-3 rounded-2xl font-bold text-xs transition"
               >
-                Passer ✕
+                Fermer
               </button>
-              <button
-                onClick={() => handleOpenMatchModal(selectedProfileModal.user_id, selectedProfileModal.first_name)}
-                className="flex-1 bg-blue-950 hover:bg-blue-900 text-white py-3 rounded-2xl font-bold text-xs shadow-md transition text-center flex items-center justify-center gap-2"
-              >
-                <span>❤️ Matcher ce profil</span>
-              </button>
+              {selectedProfileModal.status === 'accepted' ? (
+                <Link
+                  href="/messages"
+                  className="flex-1 bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-2xl font-bold text-xs shadow-md transition text-center flex items-center justify-center gap-2"
+                >
+                  <span>💬 Discuter</span>
+                </Link>
+              ) : (
+                <button
+                  onClick={() => handleOpenMatchModal(selectedProfileModal.user_id, selectedProfileModal.first_name)}
+                  className="flex-1 bg-blue-950 hover:bg-blue-900 text-white py-3 rounded-2xl font-bold text-xs shadow-md transition text-center flex items-center justify-center gap-2"
+                >
+                  <span>❤️ Matcher ce profil</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* MODALE D'EXPLICATION & CONFIRMATION DE MATCH */}
+      {/* MODALE D'EXPLICATION & CONFIRMATION DE MATCH/CONTACT */}
       {showMatchModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 shadow-xl border border-slate-100 animate-in fade-in zoom-in duration-200">
             <div className="text-center space-y-2">
               <span className="text-4xl">💌</span>
               <h3 className="text-lg font-black text-slate-900">
-                Envoyer une demande de match à {pendingTargetName} ?
+                Envoyer une demande de contact à {pendingTargetName} ?
               </h3>
               <p className="text-xs text-slate-500 leading-relaxed pt-2">
-                Votre demande de match est envoyée. Si <span className="font-semibold text-slate-800">{pendingTargetName}</span> accepte, vous retrouverez ce match dans votre page dédiée.
+                Votre demande de contact est envoyée. Si <span className="font-semibold text-slate-800">{pendingTargetName}</span> accepte, vous pourrez échanger ensemble.
               </p>
             </div>
 

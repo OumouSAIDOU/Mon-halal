@@ -30,59 +30,59 @@ export async function GET(request: Request) {
     }
 
     const myGender = (myProfileRows[0].gender || '').toString().toLowerCase().trim();
-    console.log(`[Explore API] 👤 ID ${currentUserId} | Genre brut en base : "${myGender}"`);
-
-    // 2. Détection du genre de l'utilisateur
-    // /!\ ATTENTION : "female" contient "male" ! Il FAUT tester les femmes en PREMIER.
     const isFemale = myGender.includes('femme') || myGender.includes('female') || myGender === 'f';
-    
-    // Si ce n'est pas une femme, alors c'est un homme
     const isMale = !isFemale && (myGender.includes('homme') || myGender.includes('male') || myGender === 'm' || myGender === 'h');
 
-    console.log(`[Explore API] Résultat détection -> Est une femme ? ${isFemale} | Est un homme ? ${isMale}`);
-
-    // 3. Construction de la requête SQL
+    // 2. Construction de la requête pour récupérer les profils compatibles (SANS exclusion)
     let query = `
       SELECT p.id, p.user_id, p.first_name, p.birth_date, p.city, p.postal_code, p.religiosity_level, p.bio, p.photos, p.gender
       FROM profiles p
       WHERE p.user_id != ?
-      AND p.user_id NOT IN (
-        SELECT receiver_id FROM likes WHERE sender_id = ?
-      )
     `;
-    const queryParams: any[] = [currentUserId, currentUserId];
+    const queryParams: any[] = [currentUserId];
 
     if (isFemale) {
-      // SI C'EST UNE FEMME -> ON CHERCHE UNIQUEMENT LES HOMMES
-      // Exclure les profils "female" pour ne garder que "male", "homme", etc.
       query += ` AND (
         (LOWER(p.gender) LIKE '%homme%' OR LOWER(p.gender) LIKE '%male%' OR LOWER(p.gender) = 'm' OR LOWER(p.gender) = 'h')
         AND LOWER(p.gender) NOT LIKE '%female%'
         AND LOWER(p.gender) NOT LIKE '%femme%'
       )`;
-      console.log(`[Explore API] Mode : Utilisatrice FEMME -> Affichage des HOMMES`);
     } else if (isMale) {
-      // SI C'EST UN HOMME -> ON CHERCHE UNIQUEMENT LES FEMMES
       query += ` AND (LOWER(p.gender) LIKE '%femme%' OR LOWER(p.gender) LIKE '%female%' OR LOWER(p.gender) = 'f')`;
-      console.log(`[Explore API] Mode : Utilisateur HOMME -> Affichage des FEMMES`);
     } else {
-      console.warn(`[Explore API] Attention : Genre "${myGender}" non reconnu. Aucun profil retourné par sécurité.`);
-      return NextResponse.json({
-        success: true,
-        requireProfile: false,
-        profiles: [],
-      });
+      return NextResponse.json({ success: true, requireProfile: false, profiles: [] });
     }
 
     query += ` ORDER BY p.id DESC`;
 
     const [profiles]: any = await db.query(query, queryParams);
-    console.log(`[Explore API] Nombre de profils correspondants trouvés :`, profiles.length);
+
+    // 3. Pour chaque profil, on récupère son statut exact (accepted, pending ou null)
+    const profilesWithStatus = await Promise.all(
+      profiles.map(async (profile: any) => {
+        const [relationRows]: any = await db.query(
+          `SELECT status FROM contact_requests 
+           WHERE (sender_id = ? AND receiver_id = ?) 
+              OR (sender_id = ? AND receiver_id = ?)`,
+          [currentUserId, profile.user_id, profile.user_id, currentUserId]
+        );
+
+        let status = null;
+        if (relationRows && relationRows.length > 0) {
+          status = relationRows[0].status; // 'accepted', 'pending', etc.
+        }
+
+        return {
+          ...profile,
+          status: status || null,
+        };
+      })
+    );
 
     return NextResponse.json({
       success: true,
       requireProfile: false,
-      profiles: profiles || [],
+      profiles: profilesWithStatus || [],
     });
   } catch (error) {
     console.error('Erreur serveur /api/explore:', error);
